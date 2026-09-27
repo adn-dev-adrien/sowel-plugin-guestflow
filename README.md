@@ -2,8 +2,8 @@
 
 Gives each [guestFlow](https://github.com/adn-dev-adrien/guestFlow) stay its own key to the gate,
 using Sowel's **shared access** (spec 181). One stay, one key: created seven days before the
-arrival, valid from the arrival hour to the departure hour, and ended by Sowel with the stay —
-even if guestFlow or this plugin is down.
+arrival, valid from three hours before check-in to two hours after check-out, and ended by Sowel
+with the stay — even if guestFlow or this plugin is down.
 
 guestFlow holds **no credential on the house**. The plugin runs inside Sowel and:
 
@@ -22,10 +22,23 @@ read for three hours.
 1. In Sowel, turn **Shared access** on (Settings) and set its public address.
 2. Install this plugin (Administration → Plugins → personal source
    `adn-dev-adrien/sowel-plugin-guestflow`).
-3. Fill its three settings: guestFlow's address, and the two secrets guestFlow generated in its
-   `server/.env.local` — `GATE_API_KEY` and `GATE_SIGNING_SECRET`.
+3. Fill its three settings with what guestFlow shows in **Réglages → Intégrations** (admins only):
+   guestFlow's address (https), `GATE_API_KEY` and `GATE_SIGNING_SECRET`.
 4. In **Shared access → Profiles**, grant the **Default** profile to **guestFlow** and tick the gates
    it opens. Until then every key fails with `unknown_profile`.
+
+## Security
+
+- **Nobody can pose as guestFlow.** Every answer from guestFlow carries
+  `X-Gate-Response-Signature` = hex HMAC-SHA256(`GATE_SIGNING_SECRET`,
+  `response\n<the request's X-Gate-Signature>\n<sha256 of the answer body>`). An answer that fails
+  the check is not used: no key is created, no result is sent, and an alarm is raised. Bound to the
+  request's own signature, an old answer replayed is worthless.
+- **https only** (plain http only to `localhost`), and redirects are refused: codes and links never
+  travel in clear or to another host.
+- **A key never lasts more than 31 days**, whatever the list says (`implausible_stay`): it bounds
+  what a guestFlow in the wrong hands could ask the house for. Keys only open the gates of the
+  default profile, chosen by the owner in Sowel.
 
 ## Wire contract
 

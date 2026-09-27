@@ -11,7 +11,7 @@
  * by guestFlow itself, when the list has not been read for three hours.
  */
 
-import { GuestFlowClient, GuestFlowError } from "./client.js";
+import { GuestFlowClient, GuestFlowError, checkBaseUrl } from "./client.js";
 import { applyKeys } from "./sync.js";
 import type {
   EventBus,
@@ -38,6 +38,7 @@ const REASONS: Record<string, string> = {
   profile_incomplete: "le profil « Par défaut » n'a aucun portail",
   no_end: "le séjour n'a pas de fin",
   outside_profile: "le séjour sort des dates du profil",
+  implausible_stay: "séjour de plus de 31 jours refusé",
   internal_error: "erreur interne",
 };
 
@@ -120,10 +121,13 @@ class GuestFlowPlugin implements IntegrationPlugin {
       return;
     }
     try {
-      new URL(this.setting("base_url"));
-    } catch {
+      checkBaseUrl(this.setting("base_url"));
+    } catch (err) {
       this.status = "error";
-      this.logger.error({ baseUrl: this.setting("base_url") }, "guestFlow address is not a URL");
+      this.logger.error(
+        { baseUrl: this.setting("base_url"), err: err instanceof Error ? err.message : String(err) },
+        "guestFlow address refused: an https URL is required",
+      );
       return;
     }
     // Connected means « running »: a failed read is an alarm, and the owner
@@ -191,9 +195,11 @@ class GuestFlowPlugin implements IntegrationPlugin {
       this.raise(
         ALARM_UNREACHABLE,
         "error",
-        err instanceof GuestFlowError && (err.status === 401 || err.status === 403)
-          ? "guestFlow refuse la clé ou la signature : vérifier les secrets du plugin"
-          : "guestFlow ne répond pas : les clés du portail ne sont plus relevées",
+        err instanceof GuestFlowError && err.impostor
+          ? "Une réponse ne vient pas de guestFlow (signature invalide) : aucune clé créée, rien envoyé"
+          : err instanceof GuestFlowError && (err.status === 401 || err.status === 403)
+            ? "guestFlow refuse la clé ou la signature : vérifier les secrets du plugin"
+            : "guestFlow ne répond pas : les clés du portail ne sont plus relevées",
       );
       return;
     }

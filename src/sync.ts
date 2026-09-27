@@ -8,6 +8,11 @@ import type { GateKey, GateResult, SharedAccessApi } from "./types.js";
 // ============================================================
 
 export const EXTERNAL_PREFIX = "gf:";
+/**
+ * Longer than this, a key is refused whatever the list says: it bounds what a
+ * guestFlow in the wrong hands could ask the house for.
+ */
+export const MAX_STAY_MS = 31 * 24 * 60 * 60_000;
 
 export function externalIdOf(reservationId: string): string {
   return `${EXTERNAL_PREFIX}${reservationId}`;
@@ -20,6 +25,17 @@ export function applyKeys(api: SharedAccessApi, keys: GateKey[]): GateResult[] {
     const externalId = externalIdOf(key.reservationId);
     try {
       if (key.action === "create") {
+        const span = Date.parse(key.endsAt) - Date.parse(key.startsAt);
+        if (span > MAX_STAY_MS) {
+          results.push({
+            reservationId: key.reservationId,
+            action: "create",
+            ok: false,
+            error: "implausible_stay",
+            message: "A stay longer than 31 days is refused",
+          });
+          continue;
+        }
         const invitation = api.upsert(externalId, {
           label: key.label,
           from: key.startsAt,

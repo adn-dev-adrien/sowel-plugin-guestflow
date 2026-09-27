@@ -1,5 +1,6 @@
 import { afterEach, describe, it, expect, vi } from "vitest";
 import { createPlugin } from "../src/index.js";
+import { signResponse } from "../src/client.js";
 import type { PluginDeps, SharedAccessApi } from "../src/types.js";
 
 function build(opts: { configured?: boolean; sharedAccess?: SharedAccessApi | null } = {}) {
@@ -33,14 +34,21 @@ function build(opts: { configured?: boolean; sharedAccess?: SharedAccessApi | nu
   return { plugin: createPlugin(deps), events, upserts };
 }
 
-function serveKeys(keys: unknown[], posted: unknown[] = [], status = 200) {
+/** guestFlow as it answers: signed with the plugin's secret "s", unless `forged`. */
+function serveKeys(keys: unknown[], posted: unknown[] = [], status = 200, forged = false) {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: URL, init: RequestInit) => {
       if (status !== 200) return new Response("{}", { status });
-      if (String(url).endsWith("/keys")) return new Response(JSON.stringify({ keys }), { status: 200 });
+      const reqSig = (init.headers as Record<string, string>)["X-Gate-Signature"];
+      const answer = (json: unknown) => {
+        const text = JSON.stringify(json);
+        const sig = signResponse(forged ? "not-the-secret" : "s", reqSig, text);
+        return new Response(text, { status: 200, headers: { "X-Gate-Response-Signature": sig } });
+      };
+      if (String(url).endsWith("/keys")) return answer({ keys });
       posted.push(JSON.parse(String(init.body)));
-      return new Response(JSON.stringify({ stored: 1 }), { status: 200 });
+      return answer({ stored: 1 });
     }),
   );
 }
@@ -100,6 +108,25 @@ describe("the guestFlow plugin", () => {
       "system.alarm.raised:guestflow:keys",
       "system.alarm.resolved:guestflow:keys",
     ]);
+  });
+
+  it("creates no key and sends nothing to a server posing as guestFlow", async () => {
+    const posted: unknown[] = [];
+    serveKeys([key("1")], posted, 200, true);
+    const { plugin, events, upserts } = build();
+    await plugin.refresh!();
+    expect(upserts).toEqual([]);
+    expect(posted).toEqual([]);
+    const raised = events.find((e) => e.alarmId === "guestflow:unreachable");
+    expect(String(raised?.message)).toContain("ne vient pas de guestFlow");
+  });
+
+  it("refuses to start on a plain http guestFlow address", async () => {
+    const { plugin } = build();
+    const settings = (plugin as unknown as { settings: { set: (k: string, v: string) => void } }).settings;
+    settings.set("integration.guestflow.base_url", "http://guestflow.example.org");
+    await plugin.start();
+    expect(plugin.getStatus()).toBe("error");
   });
 
   it("raises an alarm when guestFlow refuses the signature, and stays connected for Refresh", async () => {

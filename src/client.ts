@@ -1,4 +1,4 @@
-import { createHash, createHmac } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import type { GateKey, GateResult } from "./types.js";
 
 // ============================================================
@@ -8,6 +8,15 @@ import type { GateKey, GateResult } from "./types.js";
 //   Authorization: Bearer <api key>
 //   X-Gate-Timestamp: <unix ms>
 //   X-Gate-Signature: hex HMAC-SHA256(secret, METHOD\npath?query\ntimestamp\nsha256(body))
+//
+// And guestFlow proves every answer is its own: a server posing as guestFlow
+// must not make the house create keys, nor collect their codes and links.
+//
+//   X-Gate-Response-Signature: hex HMAC-SHA256(secret, "response\n" + <our
+//                              X-Gate-Signature> + "\n" + sha256(response body))
+//
+// Bound to this request's own signature, an old answer replayed is worthless.
+// Nothing from an answer that fails the check is used.
 // ============================================================
 
 const BASE_PATH = "/public/v1/gate";
@@ -19,6 +28,8 @@ export class GuestFlowError extends Error {
   constructor(
     message: string,
     readonly status: number | null,
+    /** The answer did not come from guestFlow: wrong or missing response signature. */
+    readonly impostor = false,
   ) {
     super(message);
     this.name = "GuestFlowError";
@@ -45,13 +56,34 @@ export function signRequest(
   return createHmac("sha256", secret).update(canonical).digest("hex");
 }
 
+export function signResponse(secret: string, requestSignature: string, body: string): string {
+  const bodyHash = createHash("sha256").update(body).digest("hex");
+  return createHmac("sha256", secret).update(`response\n${requestSignature}\n${bodyHash}`).digest("hex");
+}
+
+function sameHex(a: string, b: string): boolean {
+  const x = Buffer.from(a, "utf8");
+  const y = Buffer.from(b, "utf8");
+  return x.length === y.length && timingSafeEqual(x, y);
+}
+
+const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
+
+/** Codes and links travel in the results: never in clear, except to this machine itself. */
+export function checkBaseUrl(raw: string): URL {
+  const url = new URL(raw);
+  if (url.protocol === "https:") return url;
+  if (url.protocol === "http:" && LOOPBACK.has(url.hostname)) return url;
+  throw new GuestFlowError("guestFlow must be reached over https", null);
+}
+
 export class GuestFlowClient {
   private readonly base: URL;
   private readonly fetchImpl: typeof fetch;
   private readonly now: () => number;
 
   constructor(private readonly config: ClientConfig) {
-    this.base = new URL(config.baseUrl);
+    this.base = checkBaseUrl(config.baseUrl);
     this.fetchImpl = config.fetchImpl ?? fetch;
     this.now = config.now ?? Date.now;
   }
@@ -76,11 +108,12 @@ export class GuestFlowClient {
     const url = new URL(pathAndQuery, this.base.origin);
     const body = payload === undefined ? "" : JSON.stringify(payload);
     const timestamp = this.now();
+    const signature = signRequest(this.config.signingSecret, method, pathAndQuery, timestamp, body);
     const headers: Record<string, string> = {
       Accept: "application/json",
       Authorization: `Bearer ${this.config.apiKey}`,
       "X-Gate-Timestamp": String(timestamp),
-      "X-Gate-Signature": signRequest(this.config.signingSecret, method, pathAndQuery, timestamp, body),
+      "X-Gate-Signature": signature,
     };
     if (payload !== undefined) headers["Content-Type"] = "application/json";
 
@@ -93,6 +126,8 @@ export class GuestFlowClient {
         headers,
         body: payload === undefined ? undefined : body,
         signal: controller.signal,
+        // A redirect would carry the key and the results somewhere else.
+        redirect: "error",
       });
     } catch (err) {
       throw new GuestFlowError(
@@ -109,8 +144,17 @@ export class GuestFlowClient {
           : `guestFlow answered ${res.status}`;
       throw new GuestFlowError(`${reason} on ${method} ${path}`, res.status);
     }
+    const text = await res.text();
+    const claimed = res.headers.get("X-Gate-Response-Signature") ?? "";
+    if (!sameHex(claimed, signResponse(this.config.signingSecret, signature, text))) {
+      throw new GuestFlowError(
+        `the answer to ${method} ${path} is not signed by guestFlow`,
+        res.status,
+        true,
+      );
+    }
     try {
-      return await res.json();
+      return JSON.parse(text) as unknown;
     } catch {
       throw new GuestFlowError(`guestFlow answered ${method} ${path} with no JSON`, res.status);
     }

@@ -2,7 +2,7 @@
   "id": "guestflow",
   "type": "integration",
   "name": "guestFlow",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Gate keys for guestFlow stays: one shared access per stay, created 7 days before arrival and ended with the stay",
   "icon": "KeyRound",
   "repo": "adn-dev-adrien/sowel-plugin-guestflow",

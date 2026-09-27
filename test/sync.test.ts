@@ -78,6 +78,13 @@ describe("applying the list of keys", () => {
     });
   });
 
+  it("refuses a key longer than 31 days, whatever the list says", () => {
+    const { api, calls } = fakeApi();
+    const long = { ...stay("41"), startsAt: "2026-10-01T13:00:00.000Z", endsAt: "2026-11-02T13:00:01.000Z" };
+    expect(applyKeys(api, [long])[0]).toMatchObject({ ok: false, error: "implausible_stay" });
+    expect(calls).toEqual([]);
+  });
+
   it("reports an error without a code as internal_error", () => {
     const { api } = fakeApi();
     api.upsert = () => {
