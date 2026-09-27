@@ -1,0 +1,32 @@
+{
+  "id": "guestflow",
+  "type": "integration",
+  "name": "guestFlow",
+  "version": "0.1.0",
+  "description": "Gate keys for guestFlow stays: one shared access per stay, created 7 days before arrival and ended with the stay",
+  "icon": "KeyRound",
+  "repo": "adn-dev-adrien/sowel-plugin-guestflow",
+  "author": "adn-dev-adrien",
+  "sowelVersion": ">=1.71.0",
+  "settings": [
+    {
+      "key": "base_url",
+      "label": "guestFlow address",
+      "type": "text",
+      "required": true,
+      "placeholder": "https://guestflow.example.com"
+    },
+    {
+      "key": "api_key",
+      "label": "API key (GATE_API_KEY)",
+      "type": "password",
+      "required": true
+    },
+    {
+      "key": "signing_secret",
+      "label": "Signing secret (GATE_SIGNING_SECRET)",
+      "type": "password",
+      "required": true
+    }
+  ]
+}
