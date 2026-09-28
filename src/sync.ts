@@ -59,6 +59,14 @@ export function applyKeys(api: SharedAccessApi, keys: GateKey[]): GateResult[] {
         });
       }
     } catch (err) {
+      // The owner revoked this stay's key in Sowel (or revoked and deleted it):
+      // Sowel refuses to bring it back. That is the key's true state, not a
+      // failure: guestFlow shows « Révoqué » and offers no code, and nobody is
+      // alerted for a decision the owner made.
+      if (errorCode(err) === "revoked") {
+        results.push({ reservationId: key.reservationId, action: key.action, ok: true, state: "revoked" });
+        continue;
+      }
       results.push({
         reservationId: key.reservationId,
         action: key.action,

@@ -85,6 +85,13 @@ describe("applying the list of keys", () => {
     expect(calls).toEqual([]);
   });
 
+  it("reports a stay the owner revoked in Sowel as revoked, not as a failure", () => {
+    const { api } = fakeApi({ fail: { [externalIdOf("41")]: { code: "revoked", message: "The owner revoked this stay's access" } } });
+    expect(applyKeys(api, [stay("41")])).toEqual([
+      { reservationId: "41", action: "create", ok: true, state: "revoked" },
+    ]);
+  });
+
   it("reports an error without a code as internal_error", () => {
     const { api } = fakeApi();
     api.upsert = () => {
