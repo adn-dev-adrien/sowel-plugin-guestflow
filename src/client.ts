@@ -1,5 +1,5 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
-import type { GateKey, GateResult } from "./types.js";
+import type { GateKey, GateResult, Stay } from "./types.js";
 
 // ============================================================
 // The signed calls to guestFlow. guestFlow holds no credential on the house:
@@ -92,7 +92,7 @@ export class GuestFlowClient {
     const body = await this.request("GET", "/keys");
     const keys = (body as { keys?: unknown }).keys;
     if (!Array.isArray(keys)) throw new GuestFlowError("guestFlow answered without keys[]", 200);
-    return keys.filter(isGateKey);
+    return keys.filter(isGateKey).map(withStay);
   }
 
   async results(results: GateResult[]): Promise<void> {
@@ -172,4 +172,29 @@ function isGateKey(value: unknown): value is GateKey {
     typeof k.startsAt === "string" &&
     typeof k.endsAt === "string"
   );
+}
+
+/**
+ * Keep the key's own fields, and its `stay` only when it is well formed: a
+ * malformed stay never costs the key, it only stays off the devices.
+ */
+function withStay(key: GateKey): GateKey {
+  const { reservationId, action, label, startsAt, endsAt } = key;
+  const stay = parseStay((key as { stay?: unknown }).stay);
+  return stay ? { reservationId, action, label, startsAt, endsAt, stay } : { reservationId, action, label, startsAt, endsAt };
+}
+
+export function parseStay(value: unknown): Stay | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const s = value as Record<string, unknown>;
+  if (typeof s.propertyId !== "number" || !Number.isSafeInteger(s.propertyId)) return undefined;
+  if (typeof s.propertyName !== "string" || !s.propertyName.trim()) return undefined;
+  if (typeof s.arrival !== "string" || Number.isNaN(Date.parse(s.arrival))) return undefined;
+  if (typeof s.departure !== "string" || Number.isNaN(Date.parse(s.departure))) return undefined;
+  return {
+    propertyId: s.propertyId,
+    propertyName: s.propertyName.trim(),
+    arrival: s.arrival,
+    departure: s.departure,
+  };
 }

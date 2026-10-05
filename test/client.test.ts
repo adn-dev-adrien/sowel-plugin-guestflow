@@ -95,6 +95,30 @@ describe("the signed calls to guestFlow", () => {
     expect(seen[0].headers["X-Gate-Timestamp"]).toBe("1790000000000");
   });
 
+  it("keeps a well-formed stay, and a key whose stay is absent or malformed with no stay", async () => {
+    const base = { action: "create", label: "A", startsAt: "s", endsAt: "e" };
+    const stay = { propertyId: 1, propertyName: " Gîte ", arrival: "2026-10-06T16:00:00+02:00", departure: "2026-10-09T10:00:00+02:00" };
+    const { impl } = fakeFetch(() => ({
+      status: 200,
+      json: {
+        keys: [
+          { ...base, reservationId: "1", stay },
+          { ...base, reservationId: "2" },
+          { ...base, reservationId: "3", stay: "Gîte" },
+          { ...base, reservationId: "4", stay: { ...stay, propertyId: "1" } },
+          { ...base, reservationId: "5", stay: { ...stay, propertyName: "" } },
+          { ...base, reservationId: "6", stay: { ...stay, arrival: "tomorrow" } },
+          { ...base, reservationId: "7", stay: { ...stay, departure: undefined } },
+          { ...base, reservationId: "8", stay: null },
+        ],
+      },
+    }));
+    const keys = await new GuestFlowClient(config(impl)).keys();
+    expect(keys.map((k) => k.reservationId)).toEqual(["1", "2", "3", "4", "5", "6", "7", "8"]);
+    expect(keys[0].stay).toEqual({ ...stay, propertyName: "Gîte" });
+    for (const k of keys.slice(1)) expect(k).not.toHaveProperty("stay");
+  });
+
   it("keeps a path the owner put in front of guestFlow, and signs it", async () => {
     const { impl, seen } = fakeFetch(() => ({ status: 200, json: { keys: [] } }));
     await new GuestFlowClient(config(impl, "https://example.org/guestflow/")).keys();
