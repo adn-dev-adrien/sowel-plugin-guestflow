@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Séjours guestFlow dans Sowel</title>
+<style>
+:root{
+  --bg:#f6f5f2; --card:#ffffff; --ink:#1d1d1f; --muted:#6b6b70; --line:#e2e0db;
+  --accent:#d9480f; --accent-soft:#fde8dc; --cold:#1c7ed6; --ok:#2b8a3e; --ok-soft:#e3f5e7;
+  --bad:#c92a2a; --bad-soft:#fdeaea; --heat:#e8590c; --pir:#7048e8; --grid:#ecebe7; --night:#5f3dc4;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#16161a; --card:#202026; --ink:#ececf0; --muted:#9a9aa3; --line:#34343c;
+    --accent:#ff8a4c; --accent-soft:#3a2418; --cold:#5aa9ff; --ok:#51cf66; --ok-soft:#1d3323;
+    --bad:#ff6b6b; --bad-soft:#3a1c1c; --heat:#ff8a4c; --pir:#a78bfa; --grid:#2a2a31; --night:#b197fc;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#16161a; --card:#202026; --ink:#ececf0; --muted:#9a9aa3; --line:#34343c;
+  --accent:#ff8a4c; --accent-soft:#3a2418; --cold:#5aa9ff; --ok:#51cf66; --ok-soft:#1d3323;
+  --bad:#ff6b6b; --bad-soft:#3a1c1c; --heat:#ff8a4c; --pir:#a78bfa; --grid:#2a2a31; --night:#b197fc;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+main{max-width:980px;margin:0 auto;padding:24px 16px 60px}
+h1{font-size:26px;margin:0 0 4px}
+h2{font-size:18px;margin:0 0 12px}
+h3{font-size:14px;margin:14px 0 8px;color:var(--muted);font-weight:600}
+.sub{color:var(--muted);margin:0 0 20px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin:0 0 16px}
+ul.tight{margin:0;padding-left:20px} ul.tight li{margin:3px 0}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+button{font:inherit;font-size:13px;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:999px;padding:5px 11px;cursor:pointer}
+button:hover{border-color:var(--accent)}
+button.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.seg button{border-radius:8px}
+label.ctl{display:flex;flex-direction:column;gap:3px;font-size:13px;color:var(--muted);min-width:130px}
+label.ctl input,label.ctl select{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:5px 8px;min-width:0}
+input[type=range]{width:100%;padding:0}
+.grid2{display:grid;grid-template-columns:1fr 260px;gap:16px}
+@media (max-width:760px){.grid2{grid-template-columns:1fr}}
+svg{display:block;width:100%;height:auto;user-select:none}
+.legend{display:flex;flex-wrap:wrap;gap:12px;font-size:12px;color:var(--muted);margin-top:6px}
+.legend i{display:inline-block;width:12px;height:4px;border-radius:2px;margin-right:5px;vertical-align:middle}
+.log{font-size:13px;max-height:240px;overflow:auto;border-top:1px solid var(--line);margin-top:10px;padding-top:8px}
+.log div{padding:2px 4px;display:flex;gap:8px}
+.log b{font-variant-numeric:tabular-nums;color:var(--muted);font-weight:500;min-width:42px}
+.log .cur{background:var(--accent-soft);border-radius:4px}
+.kpi{display:flex;gap:16px;flex-wrap:wrap;margin-top:10px}
+.kpi div{font-size:13px;color:var(--muted)} .kpi strong{display:block;font-size:20px;color:var(--ink)}
+.tile{border:1px solid var(--line);border-radius:14px;padding:14px;background:var(--card);width:240px;max-width:100%}
+.tile .top{display:flex;align-items:center;gap:8px;font-weight:600}
+.tile .ico{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;background:var(--accent-soft);color:var(--accent)}
+.tile .sum{color:var(--muted);font-size:13px;margin:6px 0;min-height:36px}
+.tile .cd{color:var(--accent);font-size:13px;font-variant-numeric:tabular-nums;min-height:18px}
+.tile .temp{font-size:28px;font-weight:600;margin-top:4px}
+.pill{margin-top:8px;font-size:12px;padding:3px 10px;border:0;background:var(--grid)}
+.err{color:var(--bad);font-size:12px;min-height:16px}
+input.bad,select.bad{border-color:var(--bad)!important;background:var(--bad-soft)!important}
+.dec{border-top:1px solid var(--line);padding:10px 0}
+.dec:first-child{border-top:0}
+.dec p{margin:0 0 6px;font-weight:600}
+.done{color:var(--ok);font-size:13px}
+.reco{font-size:11px;color:var(--ok);margin-left:6px}
+button.on .reco{color:#fff;opacity:.85}
+.small{font-size:12px;color:var(--muted)}
+.formgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:8px 14px}
+.grp{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:10px}
+.grp.off{opacity:.45}
+.grp legend{font-size:13px;font-weight:600;padding:0 4px}
+code{overflow-wrap:anywhere;font-size:13px}
+table.blocks{width:100%;border-collapse:collapse;font-size:13px}
+table.blocks td{border-top:1px solid var(--line);padding:5px 6px;vertical-align:top}
+table.blocks td:first-child{font-weight:600;white-space:nowrap}
+.ov-form{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px 12px}
+.ov-flow{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+@media (max-width:700px){.ov-flow{grid-template-columns:1fr}}
+.ov-box{border:1px solid var(--line);border-radius:10px;padding:10px 12px;min-width:0}
+.ov-h{font-size:13px;font-weight:600;margin-bottom:6px}
+.ov-box pre{margin:0;font-size:11.5px;line-height:1.4;white-space:pre-wrap;overflow-wrap:anywhere;font-family:ui-monospace,Menlo,monospace}
+.ov-box .add{background:var(--ok-soft);color:var(--ok);display:block;border-radius:4px}
+.ov-v{font-size:16px;font-weight:600;margin-bottom:4px}
+.ov-v.ok{color:var(--ok)} .ov-v.bad{color:var(--bad)} .ov-v.dim,.dim{color:var(--muted)}
+.ov-t{font-size:13px;border-collapse:collapse} .ov-t td{padding:2px 10px 2px 0} .ov-t td:first-child{font-family:ui-monospace,Menlo,monospace;color:var(--muted)}
+.new{font-size:10px;background:var(--ok-soft);color:var(--ok);border-radius:999px;padding:1px 7px;font-weight:600;vertical-align:middle}
+.ov-alarm{margin-top:10px;color:var(--bad);font-size:13px;min-height:4px}
+</style>
+</head>
+<body>
+<main>
+<h1>Séjours guestFlow dans Sowel</h1>
+<p class="sub">Plugin guestFlow · spec 001 · v0.4.0 · à valider avant de coder</p>
+<div class="card"><h2>En bref</h2><ul class="tight">
+  <li>Même lecture horaire, même signature : le plugin lit en plus le bloc <code>stay</code> de chaque clé.</li>
+  <li>Il publie un équipement <b>« Séjours &lt;logement&gt; »</b> : <code>occupied</code>, <code>arrival</code>, <code>departure</code>.</li>
+  <li>guestFlow éteint : il continue sur la dernière liste lue, gardée sur disque.</li>
+</ul></div>
+<div class="card" id="ov">
+  <h2>Vue générale — un séjour, du logiciel au radiateur</h2>
+  <p class="small" style="margin:0 0 12px">Identique dans les 3 dépôts. Modifie le séjour ou l'heure : les 4 blocs suivent.</p>
+  <div class="ov-form">
+    <label class="ctl">Logement<select id="ovProp"><option value="1">Gîte</option><option value="2">Lodge</option></select></label>
+    <label class="ctl">Arrivée<input id="ovArr" type="datetime-local" value="2026-10-06T16:00"></label>
+    <label class="ctl">Départ<input id="ovDep" type="datetime-local" value="2026-10-09T10:00"></label>
+    <label class="ctl">Statut<select id="ovKind"><option value="reservation">Réservation</option><option value="cancelled">Annulée</option></select></label>
+    <label class="ctl">guestFlow<select id="ovUp"><option value="1">Joignable</option><option value="0">Éteint / injoignable</option></select></label>
+  </div>
+  <div class="err" id="ovErr"></div>
+  <label class="ctl" style="margin:6px 0 12px">Maintenant : <b id="ovNowL"></b>
+    <input id="ovNow" type="range" min="0" max="383" step="1" value="72">
+  </label>
+  <div class="ov-flow">
+    <div class="ov-box"><div class="ov-h">1 · guestFlow répond à <code>GET /gate/keys</code></div><pre id="ovJson"></pre></div>
+    <div class="ov-box"><div class="ov-h">2 · Clé du portail (inchangé)</div><div id="ovKey"></div></div>
+    <div class="ov-box"><div class="ov-h">3 · Équipement Sowel « Séjours <span id="ovPn"></span> » <span class="new">nouveau</span></div><div id="ovDev"></div></div>
+    <div class="ov-box"><div class="ov-h">4 · Recette « Chauffage intelligent », Chambre Nord</div><div id="ovRec"></div></div>
+  </div>
+  <div class="ov-alarm" id="ovAlarm"></div>
+</div>
+<script>
+(() => {
+  const D0 = new Date(2026, 9, 5, 0, 0); // slider origin: 05/10 00:00, 30-min steps over 8 days
+  const $ = id => document.getElementById(id);
+  const names = { 1: "Gîte", 2: "Lodge" };
+  const pad = n => String(n).padStart(2, "0");
+  const iso = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:00+02:00`;
+  const jours = ["dim.", "lun.", "mar.", "mer.", "jeu.", "ven.", "sam."];
+  const fr = d => `${jours[d.getDay()]} ${pad(d.getDate())}/${pad(d.getMonth() + 1)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const H = 3600e3;
+  let snapshot = null; // what the plugin last read, used while guestFlow is down
+
+  function read() {
+    return { prop: $("ovProp").value, arr: new Date($("ovArr").value), dep: new Date($("ovDep").value), kind: $("ovKind").value };
+  }
+  function draw() {
+    const now = new Date(D0.getTime() + (+$("ovNow").value) * 30 * 60e3);
+    $("ovNowL").textContent = fr(now);
+    const up = $("ovUp").value === "1";
+    let s = read();
+    // guestFlow refuses an incoherent stay at save time: nothing reaches Sowel
+    const bad = isNaN(s.arr) || isNaN(s.dep) || s.dep <= s.arr;
+    $("ovArr").classList.toggle("bad", bad); $("ovDep").classList.toggle("bad", bad);
+    $("ovErr").textContent = bad ? "Refusé par guestFlow : le départ doit suivre l'arrivée. Sowel garde le séjour précédent." : "";
+    if (bad) s = snapshot || s;
+    if (up && !bad) snapshot = s;
+    const seen = up ? s : (snapshot || s);
+    const tooLong = seen.dep - seen.arr > 31 * 24 * H;
+    const winStart = new Date(seen.arr - 3 * H), winEnd = new Date(seen.dep.getTime() + 2 * H);
+    const inList = winEnd > now && winStart <= new Date(now.getTime() + 7 * 24 * H);
+    $("ovPn").textContent = names[seen.prop];
+
+    // 1 — JSON
+    if (!up) $("ovJson").innerHTML = `<span class="dim">— pas de réponse —\nSowel garde la dernière liste lue\n(${fr(now)} : lecture en échec)</span>`;
+    else if (!inList) $("ovJson").innerHTML = `<span class="dim">{ "keys": [] }\n// ${winEnd <= now ? "séjour terminé" : "arrivée dans plus de 7 jours"}</span>`;
+    else $("ovJson").innerHTML =
+`{
+  "reservationId": "412",
+  "action": "${seen.kind === "cancelled" ? "revoke" : "create"}",
+  "label": "${names[seen.prop]} · R-412 · Julie",
+  "startsAt": "${iso(winStart)}",
+  "endsAt": "${iso(winEnd)}",
+<span class="add">  "stay": {
+    "propertyId": ${seen.prop},
+    "propertyName": "${names[seen.prop]}",
+    "arrival": "${iso(seen.arr)}",
+    "departure": "${iso(seen.dep)}"
+  }</span>
+}`;
+
+    // 2 — gate key
+    let key;
+    if (seen.kind === "cancelled") key = ["Révoquée", "bad"];
+    else if (tooLong) key = ["Refusée : séjour de plus de 31 jours", "bad"];
+    else if (!inList && winEnd <= now) key = ["Terminée", "dim"];
+    else if (!inList) key = ["Pas encore créée (J−7)", "dim"];
+    else if (now < winStart) key = ["Créée, valable dès " + fr(winStart), "ok"];
+    else if (now < winEnd) key = ["Ouvre le portail", "ok"];
+    else key = ["Terminée", "dim"];
+    $("ovKey").innerHTML = `<div class="ov-v ${key[1]}">${key[0]}</div><div class="small">Fenêtre portail : ${fr(winStart)} → ${fr(winEnd)}<br>(arrivée − 3 h, départ + 2 h)</div>`;
+
+    // 3 — device
+    const valid = seen.kind !== "cancelled" && !tooLong && seen.dep > now;
+    const occ = valid && now >= seen.arr && now < seen.dep;
+    $("ovDev").innerHTML = valid
+      ? `<table class="ov-t"><tr><td>occupied</td><td><b>${occ ? "oui" : "non"}</b></td></tr><tr><td>arrival</td><td>${fr(seen.arr)}</td></tr><tr><td>departure</td><td>${fr(seen.dep)}</td></tr></table>`
+      : `<table class="ov-t"><tr><td>occupied</td><td><b>non</b></td></tr><tr><td>arrival</td><td>—</td></tr><tr><td>departure</td><td>—</td></tr></table><div class="small">${tooLong ? "Séjour ignoré (plus de 31 jours)." : seen.kind === "cancelled" ? "Séjour annulé : retiré." : "Aucun séjour à venir."}</div>`;
+
+    // 4 — recipe
+    const lead = 3.3 * H, hr = now.getHours(), night = hr >= 22 || hr < 7;
+    let rec;
+    if (occ) rec = night ? ["Séjour : nuit 17 °C", ""] : ["Séjour : jour 20 °C", "ok"];
+    else if (valid && seen.arr - now <= lead) rec = ["Préchauffe → 20 °C à " + fr(seen.arr).slice(-5), "ok"];
+    else if (valid && seen.arr > now) rec = ["Vide — 12 °C · préchauffe vers " + fr(new Date(seen.arr - lead)), ""];
+    else rec = ["Vide — 12 °C", "dim"];
+    $("ovRec").innerHTML = `<div class="ov-v ${rec[1]}">${rec[0]}</div><div class="small">Ne connaît pas guestFlow : lit seulement l'équipement 3.</div>`;
+
+    $("ovAlarm").innerHTML = up ? "" : `⚠ Alarme Sowel « guestFlow injoignable ». Le chauffage et le portail continuent sur la dernière liste lue${snapshot && read().kind !== snapshot.kind ? " — l'annulation ne sera vue qu'à la prochaine lecture" : ""}.`;
+  }
+  ["ovProp", "ovArr", "ovDep", "ovKind", "ovUp"].forEach(id => $(id).addEventListener("input", draw));
+  ["ovProp", "ovKind", "ovUp"].forEach(id => $(id).addEventListener("change", draw));
+  $("ovNow").addEventListener("input", draw);
+  draw();
+})();
+</script>
+
+<div class="card">
+  <h2>Ce qui change dans ce dépôt</h2>
+  <table class="blocks">
+    <tr><td>Lecture</td><td>Inchangée (<code>GET /gate/keys</code>, 1 h, bouton « Relever maintenant »). Le bloc <code>stay</code> est facultatif : une clé sans lui reste valide.</td></tr>
+    <tr><td>Clés portail</td><td>Inchangées (accès partagés, fenêtre −3 h / +2 h, retour des résultats).</td></tr>
+    <tr><td>Équipements</td><td>Un device par logement (<code>property-&lt;id&gt;</code>), nommé d'après guestFlow. <code>occupied</code> bascule à l'heure exacte d'arrivée et de départ, par minuterie, sans attendre la lecture suivante.</td></tr>
+    <tr><td>Mémoire</td><td>La dernière liste est écrite dans le dossier de données du plugin : un redémarrage de Sowel pendant que guestFlow est éteint ne perd pas les séjours.</td></tr>
+    <tr><td>Accès partagés coupés</td><td>Aujourd'hui le plugin passe en erreur. Demain : les séjours sont publiés quand même, les clés sont signalées « accès partagés désactivés ».</td></tr>
+    <tr><td>Refus</td><td>Séjour de plus de 31 jours, ou départ avant l'arrivée : ignoré pour le chauffage comme pour le portail, et signalé à guestFlow.</td></tr>
+  </table>
+</div>
+<div class="card">
+  <h2>Hors périmètre · risque</h2>
+  <ul class="tight">
+    <li>Pas d'autre endpoint, pas de nouveau secret, pas de nom de client dans l'équipement.</li>
+    <li>Risque : une annulation faite pendant que guestFlow est injoignable n'est vue qu'à la lecture suivante (au pire, on chauffe un logement vide).</li>
+  </ul>
+</div>
+
+</main>
+</body>
+</html>
