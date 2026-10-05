@@ -85,6 +85,22 @@ describe("applying the list of keys", () => {
     expect(calls).toEqual([]);
   });
 
+  it("refuses a key whose departure is not after its arrival, by its own dates or its stay's", () => {
+    const { api, calls } = fakeApi();
+    const backwards = { ...stay("41"), startsAt: "2026-10-04T09:00:00.000Z", endsAt: "2026-10-01T13:00:00.000Z" };
+    const badStay = {
+      ...stay("42"),
+      stay: { propertyId: 1, propertyName: "Gîte", arrival: "2026-10-03T10:00:00+02:00", departure: "2026-10-03T10:00:00+02:00" },
+    };
+    const longStay = {
+      ...stay("43"),
+      stay: { propertyId: 1, propertyName: "Gîte", arrival: "2026-10-01T10:00:00+02:00", departure: "2026-11-05T10:00:00+02:00" },
+    };
+    const results = applyKeys(api, [backwards, badStay, longStay]);
+    expect(results.map((r) => (r.ok ? "ok" : r.error))).toEqual(["invalid_stay", "invalid_stay", "implausible_stay"]);
+    expect(calls).toEqual([]);
+  });
+
   it("reports a stay the owner revoked in Sowel as revoked, not as a failure", () => {
     const { api } = fakeApi({ fail: { [externalIdOf("41")]: { code: "revoked", message: "The owner revoked this stay's access" } } });
     expect(applyKeys(api, [stay("41")])).toEqual([

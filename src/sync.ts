@@ -18,6 +18,22 @@ export function externalIdOf(reservationId: string): string {
   return `${EXTERNAL_PREFIX}${reservationId}`;
 }
 
+/** Why a span is refused, or null. Unreadable dates are left to the core. */
+export function spanRefusal(from: string, until: string): { error: string; message: string } | null {
+  const span = Date.parse(until) - Date.parse(from);
+  if (span > MAX_STAY_MS) return { error: "implausible_stay", message: "A stay longer than 31 days is refused" };
+  if (span <= 0) return { error: "invalid_stay", message: "A stay whose departure is not after its arrival is refused" };
+  return null;
+}
+
+/** A key is refused for its own dates, and for its stay's when it carries one. */
+export function refusalOf(key: GateKey): { error: string; message: string } | null {
+  return (
+    spanRefusal(key.startsAt, key.endsAt) ??
+    (key.stay ? spanRefusal(key.stay.arrival, key.stay.departure) : null)
+  );
+}
+
 /** Apply every key of the list; never throws, every key gets a result. */
 export function applyKeys(api: SharedAccessApi, keys: GateKey[]): GateResult[] {
   const results: GateResult[] = [];
@@ -25,15 +41,9 @@ export function applyKeys(api: SharedAccessApi, keys: GateKey[]): GateResult[] {
     const externalId = externalIdOf(key.reservationId);
     try {
       if (key.action === "create") {
-        const span = Date.parse(key.endsAt) - Date.parse(key.startsAt);
-        if (span > MAX_STAY_MS) {
-          results.push({
-            reservationId: key.reservationId,
-            action: "create",
-            ok: false,
-            error: "implausible_stay",
-            message: "A stay longer than 31 days is refused",
-          });
+        const refusal = refusalOf(key);
+        if (refusal) {
+          results.push({ reservationId: key.reservationId, action: "create", ok: false, ...refusal });
           continue;
         }
         const invitation = api.upsert(externalId, {

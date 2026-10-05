@@ -49,12 +49,34 @@ export interface SharedAccessApi {
   }[];
 }
 
+export interface DiscoveredDevice {
+  friendlyName: string;
+  manufacturer?: string;
+  model?: string;
+  data: { key: string; type: "boolean" | "number" | "enum" | "text"; category: string; unit?: string }[];
+  orders: never[];
+}
+
+/** The part of `deps.deviceManager` this plugin calls (scoped to its own id). */
+export interface DeviceManager {
+  upsertFromDiscovery(integrationId: string, source: string, discovered: DiscoveredDevice): void;
+  updateDeviceData(
+    integrationId: string,
+    sourceDeviceId: string,
+    payload: Record<string, unknown>,
+    sourceTimestamp?: number,
+  ): void;
+  updateDeviceStatus(integrationId: string, sourceDeviceId: string, status: "online" | "offline"): void;
+}
+
 export interface PluginDeps {
   logger: Logger;
   eventBus: EventBus;
   settingsManager: SettingsManager;
-  deviceManager: unknown;
+  deviceManager: DeviceManager;
   pluginDir: string;
+  /** Where the plugin may keep state across updates. Absent on an engine that has none. */
+  dataDir?: string;
   sharedAccess?: SharedAccessApi;
 }
 
@@ -86,12 +108,22 @@ export interface IntegrationPlugin {
 
 // ── The wire contract with guestFlow ─────────────────────────
 
+/** The stay behind a key (contract v3). Optional: older guestFlows do not send it. */
+export interface Stay {
+  propertyId: number;
+  propertyName: string;
+  /** ISO-8601 with offset. */
+  arrival: string;
+  departure: string;
+}
+
 export interface GateKey {
   reservationId: string;
   action: "create" | "revoke";
   label: string;
   startsAt: string;
   endsAt: string;
+  stay?: Stay;
 }
 
 export type GateResult =

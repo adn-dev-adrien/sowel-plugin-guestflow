@@ -7,14 +7,32 @@
  * access on the default profile (spec 181 R9), and reports every result back —
  * the invitation for the guest emails, or the failure and its reason.
  *
+ * Each key may carry its stay (contract v3): the plugin then publishes one
+ * device per property — occupied now, and the dates of the current or next
+ * stay — flipped at the exact arrival and departure, and remembered on disk so
+ * a restart while guestFlow is down keeps them.
+ *
  * guestFlow holds no credential on the house; a Sowel that is down is noticed
  * by guestFlow itself, when the list has not been read for three hours.
  */
 
 import { GuestFlowClient, GuestFlowError, checkBaseUrl } from "./client.js";
 import { applyKeys } from "./sync.js";
+import {
+  EMPTY_MEMORY,
+  discoveredDeviceOf,
+  loadMemory,
+  nextBoundary,
+  saveMemory,
+  sourceIdOf,
+  staysFromKeys,
+  valuesOf,
+  type StaysMemory,
+} from "./stays.js";
 import type {
+  DeviceManager,
   EventBus,
+  GateKey,
   GateResult,
   IntegrationPlugin,
   IntegrationSettingDef,
@@ -30,6 +48,8 @@ const POLL_INTERVAL_MS = 60 * 60_000;
 const ALARM_SOURCE = "guestflow";
 const ALARM_UNREACHABLE = "guestflow:unreachable";
 const ALARM_KEYS = "guestflow:keys";
+/** setTimeout's ceiling (~24.8 days): a later boundary is reached in several waits. */
+const MAX_TIMER_MS = 2 ** 31 - 1;
 
 /** What the owner reads in the Activity feed and the alarm list (French, as the house). */
 const REASONS: Record<string, string> = {
@@ -39,6 +59,8 @@ const REASONS: Record<string, string> = {
   no_end: "le séjour n'a pas de fin",
   outside_profile: "le séjour sort des dates du profil",
   implausible_stay: "séjour de plus de 31 jours refusé",
+  invalid_stay: "le départ du séjour n'est pas après son arrivée",
+  shared_access_off: "les accès partagés ne sont pas disponibles dans ce Sowel",
   internal_error: "erreur interne",
 };
 
@@ -66,13 +88,15 @@ const SETTINGS: IntegrationSettingDef[] = [
 class GuestFlowPlugin implements IntegrationPlugin {
   readonly id = PLUGIN_ID;
   readonly name = "guestFlow";
-  readonly description = "Gate keys for guestFlow stays";
+  readonly description = "Gate keys and stays for guestFlow";
   readonly icon = "KeyRound";
 
   private readonly logger: Logger;
   private readonly eventBus: EventBus;
   private readonly settings: SettingsManager;
   private readonly sharedAccess: SharedAccessApi | undefined;
+  private readonly deviceManager: DeviceManager;
+  private readonly dataDir: string | undefined;
 
   private status: IntegrationStatus = "disconnected";
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -81,12 +105,21 @@ class GuestFlowPlugin implements IntegrationPlugin {
   /** Alarm id → message raised: each raise reaches the Activity feed and the notifications. */
   private raised = new Map<string, string>();
   private stopped = true;
+  /** The stays behind the devices: the last list read, or the one remembered on disk. */
+  private memory: StaysMemory = EMPTY_MEMORY;
+  private memoryLoaded = false;
+  private boundaryTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(deps: PluginDeps) {
     this.logger = deps.logger;
     this.eventBus = deps.eventBus;
     this.settings = deps.settingsManager;
     this.sharedAccess = deps.sharedAccess;
+    this.deviceManager = deps.deviceManager;
+    this.dataDir = deps.dataDir;
+    if (!this.dataDir) {
+      this.logger.info("This Sowel gives plugins no data directory: stays are kept in memory only");
+    }
   }
 
   private setting(key: string): string {
@@ -115,11 +148,6 @@ class GuestFlowPlugin implements IntegrationPlugin {
       this.status = "not_configured";
       return;
     }
-    if (!this.sharedAccess) {
-      this.status = "error";
-      this.logger.error("This Sowel has no shared access (spec 181): guestFlow keys cannot be created");
-      return;
-    }
     try {
       checkBaseUrl(this.setting("base_url"));
     } catch (err) {
@@ -130,6 +158,12 @@ class GuestFlowPlugin implements IntegrationPlugin {
       );
       return;
     }
+    if (!this.sharedAccess) {
+      this.logger.warn(
+        "This Sowel has no shared access (spec 181): stays are published, keys are reported shared_access_off",
+      );
+    }
+    this.restoreMemory();
     // Connected means « running »: a failed read is an alarm, and the owner
     // keeps the Refresh button to read again.
     this.status = "connected";
@@ -141,7 +175,16 @@ class GuestFlowPlugin implements IntegrationPlugin {
     this.stopped = true;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
+    this.clearBoundary();
     await this.running?.catch(() => {});
+    this.clearBoundary();
+    for (const id of Object.keys(this.memory.properties)) {
+      try {
+        this.deviceManager.updateDeviceStatus(PLUGIN_ID, sourceIdOf(id), "offline");
+      } catch {
+        // the core is going down with us
+      }
+    }
     if (this.status === "connected") {
       this.eventBus.emit({ type: "system.integration.disconnected", integrationId: this.id });
     }
@@ -178,7 +221,7 @@ class GuestFlowPlugin implements IntegrationPlugin {
   }
 
   private async readOnce(): Promise<void> {
-    if (!this.sharedAccess || !this.isConfigured()) return;
+    if (!this.isConfigured()) return;
     const client = new GuestFlowClient({
       baseUrl: this.setting("base_url"),
       apiKey: this.setting("api_key"),
@@ -187,7 +230,8 @@ class GuestFlowPlugin implements IntegrationPlugin {
     let results: GateResult[];
     try {
       const keys = await client.keys();
-      results = applyKeys(this.sharedAccess, keys);
+      this.takeStays(keys);
+      results = this.sharedAccess ? applyKeys(this.sharedAccess, keys) : keys.map(sharedAccessOff);
       await client.results(results);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -225,6 +269,89 @@ class GuestFlowPlugin implements IntegrationPlugin {
     }
   }
 
+  // ── Stays ──────────────────────────────────────────────────
+
+  /** At start: the devices as last read, before guestFlow answers (or if it never does). */
+  private restoreMemory(): void {
+    if (!this.memoryLoaded && this.dataDir) {
+      try {
+        const memory = loadMemory(this.dataDir);
+        if (memory) {
+          this.memory = memory;
+          this.logger.info({ stays: memory.stays.length }, "Stays restored from the last list read");
+        }
+      } catch (err) {
+        this.logger.warn(
+          { err: err instanceof Error ? err.message : String(err) },
+          "Stays memory unreadable: starting empty",
+        );
+      }
+    }
+    this.memoryLoaded = true;
+    this.publishStays(true);
+  }
+
+  private takeStays(keys: GateKey[]): void {
+    const { memory, ignored } = staysFromKeys(keys, this.memory);
+    for (const i of ignored) {
+      this.logger.warn({ reservationId: i.reservationId, error: i.error }, "Stay ignored for the devices");
+    }
+    const changed = JSON.stringify(memory) !== JSON.stringify(this.memory);
+    this.memory = memory;
+    this.memoryLoaded = true;
+    if (changed && this.dataDir) {
+      try {
+        saveMemory(this.dataDir, memory);
+      } catch (err) {
+        this.logger.warn(
+          { err: err instanceof Error ? err.message : String(err) },
+          "Stays memory could not be written",
+        );
+      }
+    }
+    this.publishStays(true);
+  }
+
+  /** Push every property's values; `discover` also declares the devices. */
+  private publishStays(discover: boolean): void {
+    const now = Date.now();
+    for (const [id, name] of Object.entries(this.memory.properties)) {
+      const sourceId = sourceIdOf(id);
+      try {
+        if (discover) {
+          this.deviceManager.upsertFromDiscovery(PLUGIN_ID, PLUGIN_ID, discoveredDeviceOf(name, id));
+          this.deviceManager.updateDeviceStatus(PLUGIN_ID, sourceId, "online");
+        }
+        const values = valuesOf(this.memory, id, now);
+        this.deviceManager.updateDeviceData(PLUGIN_ID, sourceId, { ...values });
+      } catch (err) {
+        this.logger.warn(
+          { property: id, err: err instanceof Error ? err.message : String(err) },
+          "Stay device could not be updated",
+        );
+      }
+    }
+    this.scheduleBoundary(now);
+  }
+
+  /** Wake at the next arrival or departure, to flip `occupied` on the dot. */
+  private scheduleBoundary(now: number): void {
+    this.clearBoundary();
+    if (this.stopped) return;
+    const next = nextBoundary(this.memory, now);
+    if (next === null) return;
+    const delay = Math.min(next - now, MAX_TIMER_MS);
+    this.boundaryTimer = setTimeout(() => {
+      this.boundaryTimer = null;
+      this.publishStays(false);
+    }, delay);
+  }
+
+  private clearBoundary(): void {
+    if (this.boundaryTimer) clearTimeout(this.boundaryTimer);
+    this.boundaryTimer = null;
+  }
+
   private raise(alarmId: string, level: "warning" | "error", message: string): void {
     if (this.raised.get(alarmId) === message) return;
     this.raised.set(alarmId, message);
@@ -235,6 +362,17 @@ class GuestFlowPlugin implements IntegrationPlugin {
     if (!this.raised.delete(alarmId)) return;
     this.eventBus.emit({ type: "system.alarm.resolved", alarmId, source: ALARM_SOURCE, message });
   }
+}
+
+/** Without shared access, every key is answered, and none is created. */
+function sharedAccessOff(key: GateKey): GateResult {
+  return {
+    reservationId: key.reservationId,
+    action: key.action,
+    ok: false,
+    error: "shared_access_off",
+    message: "This Sowel has no shared access: no key can be created or revoked",
+  };
 }
 
 export function createPlugin(deps: PluginDeps): IntegrationPlugin {
