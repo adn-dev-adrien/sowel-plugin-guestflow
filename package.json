@@ -1,7 +1,7 @@
 {
   "name": "sowel-plugin-guestflow",
-  "version": "0.4.0",
-  "description": "Sowel plugin: gate keys and stay devices for guestFlow",
+  "version": "0.5.0",
+  "description": "Sowel plugin: gate keys, stay devices and the home-automation bridge for guestFlow",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {

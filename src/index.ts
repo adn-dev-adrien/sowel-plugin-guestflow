@@ -12,12 +12,18 @@
  * stay — flipped at the exact arrival and departure, and remembered on disk so
  * a restart while guestFlow is down keeps them.
  *
+ * Home automation (spec 002): a bridge device, `home-bridge`, carries the
+ * guest app's « Domotique » page — catalogue, readings and series up, the
+ * guests' light commands down — between guestFlow and the `guest-home` recipe.
+ * The plugin decides nothing there and sends no order to any equipment.
+ *
  * guestFlow holds no credential on the house; a Sowel that is down is noticed
  * by guestFlow itself, when the list has not been read for three hours.
  */
 
 import { GuestFlowClient, GuestFlowError, checkBaseUrl } from "./client.js";
 import { applyKeys } from "./sync.js";
+import { BRIDGE_ID, HomeBridge } from "./home.js";
 import {
   EMPTY_MEMORY,
   discoveredDeviceOf,
@@ -109,6 +115,7 @@ class GuestFlowPlugin implements IntegrationPlugin {
   private memory: StaysMemory = EMPTY_MEMORY;
   private memoryLoaded = false;
   private boundaryTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly home: HomeBridge;
 
   constructor(deps: PluginDeps) {
     this.logger = deps.logger;
@@ -120,6 +127,22 @@ class GuestFlowPlugin implements IntegrationPlugin {
     if (!this.dataDir) {
       this.logger.info("This Sowel gives plugins no data directory: stays are kept in memory only");
     }
+    this.home = new HomeBridge({
+      logger: this.logger,
+      deviceManager: this.deviceManager,
+      client: () => this.client(),
+      isOccupied: (propertyId, now) => valuesOf(this.memory, propertyId, now).occupied,
+      refreshStays: () => this.poll(),
+      dataDir: this.dataDir,
+    });
+  }
+
+  private client(): GuestFlowClient {
+    return new GuestFlowClient({
+      baseUrl: this.setting("base_url"),
+      apiKey: this.setting("api_key"),
+      signingSecret: this.setting("signing_secret"),
+    });
   }
 
   private setting(key: string): string {
@@ -169,6 +192,7 @@ class GuestFlowPlugin implements IntegrationPlugin {
     this.status = "connected";
     this.eventBus.emit({ type: "system.integration.connected", integrationId: this.id });
     this.schedule(options?.pollOffset ?? 0);
+    this.home.start();
   }
 
   async stop(): Promise<void> {
@@ -176,6 +200,7 @@ class GuestFlowPlugin implements IntegrationPlugin {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     this.clearBoundary();
+    await this.home.stop();
     await this.running?.catch(() => {});
     this.clearBoundary();
     for (const id of Object.keys(this.memory.properties)) {
@@ -191,8 +216,13 @@ class GuestFlowPlugin implements IntegrationPlugin {
     this.status = "disconnected";
   }
 
-  async executeOrder(): Promise<void> {
-    throw new Error("guestFlow has no device to command");
+  /** The `guest-home` recipe's orders to the bridge — the only device that takes any. */
+  async executeOrder(device: unknown, orderKeyOrDispatchConfig: unknown, value: unknown): Promise<void> {
+    const sourceId = (device as { sourceDeviceId?: unknown } | null)?.sourceDeviceId;
+    if (sourceId !== undefined && sourceId !== BRIDGE_ID) {
+      throw new Error(`guestFlow device ${String(sourceId)} takes no order`);
+    }
+    await this.home.order(orderKeyOf(orderKeyOrDispatchConfig), value);
   }
 
   /** « Relever maintenant »: the integration's Refresh button. */
@@ -222,11 +252,7 @@ class GuestFlowPlugin implements IntegrationPlugin {
 
   private async readOnce(): Promise<void> {
     if (!this.isConfigured()) return;
-    const client = new GuestFlowClient({
-      baseUrl: this.setting("base_url"),
-      apiKey: this.setting("api_key"),
-      signingSecret: this.setting("signing_secret"),
-    });
+    const client = this.client();
     let results: GateResult[];
     try {
       const keys = await client.keys();
@@ -362,6 +388,14 @@ class GuestFlowPlugin implements IntegrationPlugin {
     if (!this.raised.delete(alarmId)) return;
     this.eventBus.emit({ type: "system.alarm.resolved", alarmId, source: ALARM_SOURCE, message });
   }
+}
+
+/** The core passes the order key, or a dispatch config carrying it. */
+function orderKeyOf(orderKeyOrDispatchConfig: unknown): string {
+  if (typeof orderKeyOrDispatchConfig === "string") return orderKeyOrDispatchConfig;
+  const config = (orderKeyOrDispatchConfig ?? {}) as Record<string, unknown>;
+  const candidate = config.orderKey ?? config.key ?? config.alias;
+  return typeof candidate === "string" ? candidate : "";
 }
 
 /** Without shared access, every key is answered, and none is created. */

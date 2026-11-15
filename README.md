@@ -1,4 +1,4 @@
-# Sowel Plugin: guestFlow gate keys and stays
+# Sowel Plugin: guestFlow gate keys, stays and home automation
 
 Gives each [guestFlow](https://github.com/adn-dev-adrien/guestFlow) stay its own key to the gate,
 using Sowel's **shared access** (spec 181). One stay, one key: created seven days before the
@@ -42,6 +42,44 @@ If guestFlow cannot be reached or refuses the signature, or a key cannot be crea
 is raised once and cleared when it passes. guestFlow alerts on its side when the list has not been
 read for three hours.
 
+## Home automation for guests (v0.5.0)
+
+guestFlow's guest app has a « Domotique » page: room temperatures, outdoor weather, rain, the
+lodging's electricity, and the lights the owner entrusts to guests. A Sowel API token cannot be
+scoped, so guestFlow holds none: **the house calls guestFlow**, on the same channel and with the
+same secrets as the gate (no new setting). This plugin only **carries** the traffic; the
+[`guest-home` recipe](https://github.com/adn-dev-adrien/sowel-recipe-guest-home) — the only part
+allowed to read equipments and send orders — decides and acts. Nothing that decides also actuates.
+
+The plugin publishes one device, source id `home-bridge` (model « Domotique GuestFlow »):
+
+| Key | Kind | Value |
+| --- | --- | --- |
+| `home_catalog` | order, text | the recipe's catalogue as JSON → `PUT /public/v1/home/catalog` |
+| `home_readings` | order, text | readings as JSON → `POST /public/v1/home/readings` |
+| `home_series` | order, text | hourly series as JSON → `POST /public/v1/home/series` |
+| `home_result` | order, text | a command's verdict `{ id, ok, reason? }` → `POST /public/v1/home/commands/results` |
+| `home_selection` | data, text | the `(equipmentId, alias)` pairs guestFlow wants values for, as JSON |
+| `home_command` | data, text | the latest guest command, as JSON |
+| `home_command_seq` | data, number | +1 per command (seeded on the clock at start, so it only goes up) |
+
+- **Catalogue**: an identical list is not resent within the hour; the last one is resent every
+  hour, and at start (it is kept in the data directory). guestFlow's answer is published on
+  `home_selection`.
+- **Readings and series** are sent as received. A failure is logged and dropped: the next batch
+  supersedes it — no queue, no replay of stale values.
+- **Commands**: a long poll on `GET /public/v1/home/commands?wait=25`, asked again at once after an
+  answer (not before 5 s after an empty one), with a backoff of 5 s doubling to 5 min after an
+  error. It runs only while the plugin is started and configured.
+- **Occupancy guard**: a command for a property that is not occupied now, according to the stays
+  the plugin already holds, is answered `ok: false, reason: "not_occupied"` and never published.
+  It guards against a guestFlow bug, not a compromised guestFlow (which sends the stays): the
+  recipe's whitelist is the real boundary.
+- The plugin **never sends an order to any equipment**.
+
+To wire it: create an equipment from the `home-bridge` device (all its data and orders bound,
+aliases left as the keys), then add one `guest-home` recipe bound to it.
+
 ## Setup
 
 1. In Sowel, turn **Shared access** on (Settings) and set its public address.
@@ -75,6 +113,11 @@ Signed with `Authorization: Bearer <GATE_API_KEY>`, `X-Gate-Timestamp` (ms) and
   with the optional `stay: { propertyId, propertyName, arrival, departure }` (contract v3, ISO-8601
   with offset)
 - `POST /public/v1/gate/results` ← `{ results: [{ reservationId, action, ok: true, state, code, url } | { reservationId, action, ok: false, error, message }] }`
+- `PUT /public/v1/home/catalog` ← `{ equipments: [{ id, name, zonePath, type, guestSwitchable?, readings: [{ alias, category, unit }] }] }` → `{ selection: [{ equipmentId, alias }] }`
+- `POST /public/v1/home/readings` ← `{ readings: [{ equipmentId, alias, value, unit, measuredAt }] }`
+- `POST /public/v1/home/series` ← `{ series: [{ equipmentId, alias, buckets: [{ time, value }] }] }` (24 buckets at most)
+- `GET /public/v1/home/commands?wait=25` → `{ commands: [{ id, propertyId, equipmentId, value: "on"|"off", issuedAt }] }`
+- `POST /public/v1/home/commands/results` ← `{ results: [{ id, ok, reason? }] }`
 
 ## Development
 

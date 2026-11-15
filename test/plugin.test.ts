@@ -71,6 +71,7 @@ function serveKeys(keys: unknown[], posted: unknown[] = [], status = 200, forged
         return new Response(text, { status: 200, headers: { "X-Gate-Response-Signature": sig } });
       };
       if (String(url).endsWith("/keys")) return answer({ keys });
+      if (String(url).includes("/home/commands?")) return answer({ commands: [] });
       posted.push(JSON.parse(String(init.body)));
       return answer({ stored: 1 });
     }),
@@ -188,7 +189,7 @@ describe("stays as devices", () => {
     await plugin.start();
     await vi.advanceTimersByTimeAsync(0);
     expect(upserts).toEqual(["gf:1", "gf:2", "gf:3"]);
-    expect([...devices.discovered.keys()]).toEqual(["property-1", "property-2"]);
+    expect([...devices.discovered.keys()]).toEqual(["home-bridge", "property-1", "property-2"]);
     const gite = devices.discovered.get("property-1")!;
     expect(gite.model).toBe("Séjours Gîte");
     expect(gite.data.map((d) => `${d.key}:${d.type}:${d.category}`)).toEqual([

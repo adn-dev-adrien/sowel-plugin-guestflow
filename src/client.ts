@@ -1,5 +1,15 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
-import type { GateKey, GateResult, Stay } from "./types.js";
+import type {
+  GateKey,
+  GateResult,
+  HomeCatalogEntry,
+  HomeCommand,
+  HomeReading,
+  HomeResult,
+  HomeSelectionPair,
+  HomeSeries,
+  Stay,
+} from "./types.js";
 
 // ============================================================
 // The signed calls to guestFlow. guestFlow holds no credential on the house:
@@ -19,8 +29,12 @@ import type { GateKey, GateResult, Stay } from "./types.js";
 // Nothing from an answer that fails the check is used.
 // ============================================================
 
-const BASE_PATH = "/public/v1/gate";
+/** The two trees of guestFlow's connector: same key, same signature, same signed answers. */
+const TREES = { gate: "/public/v1/gate", home: "/public/v1/home" } as const;
+type Tree = keyof typeof TREES;
 const REQUEST_TIMEOUT_MS = 20_000;
+/** guestFlow holds a long poll at most this long (homeController MAX_WAIT_S). */
+export const HOME_WAIT_S = 25;
 /** guestFlow refuses a batch above this. */
 export const MAX_RESULTS_PER_POST = 500;
 
@@ -89,7 +103,7 @@ export class GuestFlowClient {
   }
 
   async keys(): Promise<GateKey[]> {
-    const body = await this.request("GET", "/keys");
+    const body = await this.request("gate", "GET", "/keys");
     const keys = (body as { keys?: unknown }).keys;
     if (!Array.isArray(keys)) throw new GuestFlowError("guestFlow answered without keys[]", 200);
     return keys.filter(isGateKey).map(withStay);
@@ -97,14 +111,81 @@ export class GuestFlowClient {
 
   async results(results: GateResult[]): Promise<void> {
     for (let i = 0; i < results.length; i += MAX_RESULTS_PER_POST) {
-      await this.request("POST", "/results", { results: results.slice(i, i + MAX_RESULTS_PER_POST) });
+      await this.request("gate", "POST", "/results", { results: results.slice(i, i + MAX_RESULTS_PER_POST) });
     }
   }
 
-  private async request(method: "GET" | "POST", path: string, payload?: unknown): Promise<unknown> {
+  // ── Home automation (spec 002) ─────────────────────────────
+
+  /** The catalogue, answered with the pairs guestFlow wants values for. */
+  async homeCatalog(equipments: HomeCatalogEntry[]): Promise<HomeSelectionPair[]> {
+    const body = await this.request("home", "PUT", "/catalog", { equipments });
+    const selection = (body as { selection?: unknown }).selection;
+    if (!Array.isArray(selection)) throw new GuestFlowError("guestFlow answered without selection[]", 200);
+    return selection
+      .filter(
+        (p): p is HomeSelectionPair =>
+          !!p &&
+          typeof (p as HomeSelectionPair).equipmentId === "string" &&
+          typeof (p as HomeSelectionPair).alias === "string",
+      )
+      .map((p) => ({ equipmentId: p.equipmentId, alias: p.alias }));
+  }
+
+  async homeReadings(readings: HomeReading[]): Promise<void> {
+    await this.request("home", "POST", "/readings", { readings });
+  }
+
+  async homeSeries(series: HomeSeries[]): Promise<void> {
+    await this.request("home", "POST", "/series", { series });
+  }
+
+  /**
+   * The long poll: guestFlow answers at once with a command, or empty after `wait` seconds.
+   * `invalid` is the id of each unusable command whose id could be read, to be answered.
+   */
+  async homeCommands(
+    signal?: AbortSignal,
+    wait = HOME_WAIT_S,
+  ): Promise<{ commands: HomeCommand[]; invalid: number[] }> {
+    const body = await this.request("home", "GET", `/commands?wait=${wait}`, undefined, {
+      timeoutMs: (wait + 15) * 1000,
+      signal,
+    });
+    const commands = (body as { commands?: unknown }).commands;
+    if (!Array.isArray(commands)) throw new GuestFlowError("guestFlow answered without commands[]", 200);
+    const invalid = commands
+      .filter((c) => !isHomeCommand(c))
+      .map((c) => (c as { id?: unknown } | null)?.id)
+      .filter((id): id is number => Number.isSafeInteger(id) && (id as number) > 0);
+    return {
+      commands: commands.filter(isHomeCommand).map((c) => ({
+        id: c.id,
+        propertyId: c.propertyId,
+        equipmentId: c.equipmentId,
+        value: c.value,
+        issuedAt: c.issuedAt,
+      })),
+      invalid,
+    };
+  }
+
+  async homeResults(results: HomeResult[]): Promise<void> {
+    for (let i = 0; i < results.length; i += MAX_RESULTS_PER_POST) {
+      await this.request("home", "POST", "/commands/results", { results: results.slice(i, i + MAX_RESULTS_PER_POST) });
+    }
+  }
+
+  private async request(
+    tree: Tree,
+    method: "GET" | "POST" | "PUT",
+    path: string,
+    payload?: unknown,
+    opts: { timeoutMs?: number; signal?: AbortSignal } = {},
+  ): Promise<unknown> {
     // Keep a base path the owner may have put in front of guestFlow.
     const prefix = this.base.pathname.replace(/\/+$/, "");
-    const pathAndQuery = `${prefix}${BASE_PATH}${path}`;
+    const pathAndQuery = `${prefix}${TREES[tree]}${path}`;
     const url = new URL(pathAndQuery, this.base.origin);
     const body = payload === undefined ? "" : JSON.stringify(payload);
     const timestamp = this.now();
@@ -118,7 +199,9 @@ export class GuestFlowClient {
     if (payload !== undefined) headers["Content-Type"] = "application/json";
 
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? REQUEST_TIMEOUT_MS);
+    const onAbort = () => controller.abort();
+    opts.signal?.addEventListener("abort", onAbort, { once: true });
     let res: Response;
     try {
       res = await this.fetchImpl(url, {
@@ -136,6 +219,7 @@ export class GuestFlowClient {
       );
     } finally {
       clearTimeout(timer);
+      opts.signal?.removeEventListener("abort", onAbort);
     }
     if (!res.ok) {
       const reason =
@@ -159,6 +243,20 @@ export class GuestFlowClient {
       throw new GuestFlowError(`guestFlow answered ${method} ${path} with no JSON`, res.status);
     }
   }
+}
+
+function isHomeCommand(value: unknown): value is HomeCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as Record<string, unknown>;
+  return (
+    Number.isSafeInteger(c.id) &&
+    (c.id as number) > 0 &&
+    Number.isSafeInteger(c.propertyId) &&
+    typeof c.equipmentId === "string" &&
+    c.equipmentId.length > 0 &&
+    (c.value === "on" || c.value === "off") &&
+    typeof c.issuedAt === "string"
+  );
 }
 
 function isGateKey(value: unknown): value is GateKey {
