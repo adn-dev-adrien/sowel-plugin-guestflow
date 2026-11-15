@@ -32,9 +32,11 @@ orders — decides and acts. « Rien de ce qui décide ne doit aussi actionner �
    after an answer and with backoff (5 s → 5 min) after an error. For each command:
    - **occupancy guard** (gF rule 9): the plugin already holds the stays (spec 001). A command for
      a property that is not occupied now is answered `ok: false, reason: "not_occupied"` and never
-     published. This protects against a guestFlow bug, not a compromised guestFlow (it sends the
+     published — after one re-read of the stays (at most once a minute), since they are otherwise
+     read hourly and a stay booked or extended since must not be refused. This protects against a guestFlow bug, not a compromised guestFlow (it sends the
      stays), which is why the recipe holds the real boundary;
-   - otherwise `home_command` is set and `home_command_seq` incremented.
+   - otherwise `home_command` is set and `home_command_seq` incremented;
+   - a command it cannot use but whose `id` it can read is answered `invalid_command`.
 6. **Results** — on `home_result`, `POST /public/v1/home/commands/results`.
 7. The plugin **never sends an order** to any equipment.
 
@@ -50,18 +52,23 @@ One instance for the whole house, like `guest-gate`.
    `light_onoff`, `light_dimmable`, `light_color`, or `switch` with a light category, with its id,
    name, zone path, type and readable values (alias, category, unit). A light carries
    `guestSwitchable: true` iff it is in the whitelist. No value. Sent through `home_catalog`.
-3. **Readings** — every 60 s, the current value, unit and last-updated time of each pair in
-   `home_selection` only, through `home_readings`. A pair whose equipment no longer exists is
-   skipped.
+3. **Readings** — every 60 s (and 2 s after a selection change), the current value, unit and
+   last-updated time of each pair in `home_selection` **that the catalogue describes** (a catalogued
+   equipment, an alias among its readings, never the bridge), through `home_readings`, 200 pairs at
+   most. guestFlow writes the selection, so the selection alone proves nothing (review of
+   2026-11-15). A pair whose equipment no longer exists is skipped; the series of a pair no longer
+   selected are forgotten.
 4. **Series** — at each hour boundary the recipe records, per selected equipment, the previous
    hour's `rain_1h` and `energy_hour` into its state store (persistent), keeps 24 buckets, and sends
    them every 15 min through `home_series`. After a fresh install the series fills over 24 h.
 5. **Commands** — on `home_command_seq` strictly greater than the last seen (never on the first
    read after a start, like `guest-gate`), it executes the command only if **all** hold:
+   - it is in the whitelist (slot 1) — checked first, so a refusal says nothing of an unknown id;
    - the equipment exists and is a light (the types of 2);
-   - it is in the whitelist (slot 1);
    - `issuedAt` is less than 60 s old;
-   - fewer than 20 commands for that `propertyId` in the last hour;
+   - fewer than 20 commands for that **light** in the last hour — `propertyId` is guestFlow's word,
+     so a limit keyed on it bounds nothing (review of 2026-11-15);
+   - its `id` was not handled in the last hour;
    then `ctx.dispatchOrder` on its `state` order (`"ON"`/`"OFF"` for an enum, `true`/`false` for a
    boolean). No timer: the light stays as switched (gF rule 7).
    It reports `{ id, ok, reason? }` through `home_result` — reasons `not_a_light`,
@@ -82,7 +89,7 @@ One instance for the whole house, like `guest-gate`.
 ## Risk
 
 The whitelist is the boundary: whoever fully controls guestFlow can switch **the entrusted lights**
-on or off, at most 20 times an hour per lodging, and nothing else (gF rule 11, accepted by Adrien on
+on or off, at most 20 times an hour each, and nothing else (gF rule 11, accepted by Adrien on
 2026-11-15). Readings of non-selected equipments never leave the house; the catalogue does describe
 the whole house's sensors and lights by name and zone, values excluded.
 
@@ -95,20 +102,22 @@ What the Sowel core imposed or the build settled, beyond the rules above:
 2. **Bridge orders** — declared through `upsertFromDiscovery` with `orders: [{ key, type: "text" }]`. Core uses the
    friendly name as the source id: the device is `home-bridge`, « Domotique GuestFlow » is its model.
 3. **`invalid_command`** — an extra refusal reason, for an unreadable command or a value other than on/off.
-4. **`home_command_seq`** starts from `Date.now()` at plugin start, so a restarted plugin never publishes a lower
-   number the recipe would ignore.
+4. **`home_command_seq`** starts from `max(Date.now(), last published + 1)` at plugin start (the last one is kept in
+   the data directory), so a restarted plugin — even across a clock stepped back — never publishes a lower number the
+   recipe would ignore.
 5. **Long poll** — an empty answer that came back in under 5 s waits 5 s before the next poll (no busy loop); the
-   client times out at `wait + 15` s.
+   client times out at `wait + 15` s. Each run owns its abort signal, so a start right after a stop never leaves two
+   loops; an error while handling one command is logged and the loop goes on.
 6. **Catalogue** — the plugin keeps the last one in its data directory and resends it at start; the recipe resends it
    hourly and 2 s after a change (equipment, `zone.updated`, `zone.removed`). Core has no binding-change event: a
    rebind is seen at the hourly resend. The bridge equipment is left out of the catalogue.
 7. **Series** — hourly aliases `rain_1h`, `energy_hour`, and `sum_rain_1` (guestFlow's `homeRoles` fall-back); a
    bucket is the last sample of the hour that just closed; readings and series also read `computedData`, where core
    keeps `rain_1h` and `energy_hour`.
-8. **Rate limit** — counts the commands that passed the type, whitelist and age checks, per `propertyId`, and survives
+8. **Rate limit** — counts the commands that passed the whitelist, type and age checks, per light, and survives
    a recipe restart (state store). An `issuedAt` more than 60 s in the future is refused as `too_old`.
 9. **Light order** — the `state` order, else category `light_toggle` / `toggle_power`; `true`/`false` for a boolean
-   order, the enum's own ON/OFF otherwise.
+   order, the enum's own ON/OFF when it names them; any other order is `order_failed`.
 10. **Signature** — two request vectors of the home tree are pinned here and in guestFlow's
     `sowel-home-connector.unit.test.js`.
 
@@ -122,4 +131,4 @@ What the Sowel core imposed or the build settled, beyond the rules above:
 
 ## Test counts
 
-Plugin 55 (41 before: +11 `home.test.ts`, +3 client); recipe 15.
+Plugin 58 (41 before: +14 `home.test.ts`, +3 client); recipe 20.

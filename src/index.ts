@@ -132,6 +132,7 @@ class GuestFlowPlugin implements IntegrationPlugin {
       deviceManager: this.deviceManager,
       client: () => this.client(),
       isOccupied: (propertyId, now) => valuesOf(this.memory, propertyId, now).occupied,
+      refreshStays: () => this.poll(),
       dataDir: this.dataDir,
     });
   }

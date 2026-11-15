@@ -302,6 +302,49 @@ describe("the commands long poll", () => {
     await plugin.stop();
   });
 
+  it("re-reads the stays once before refusing: a stay booked since the hourly read is not refused", async () => {
+    vi.useFakeTimers({ now: new Date(NOW) });
+    const gf = guestFlow({ commands: [[command(1, 1)]] });
+    const { plugin, bridgeWrites } = build();
+    await plugin.start(); // no stays read yet
+    await vi.advanceTimersByTimeAsync(0);
+    expect(gf.calls.some((c) => c.path.endsWith("/gate/keys"))).toBe(true);
+    expect(bridgeWrites("home_command").map((c) => JSON.parse(String(c)).id)).toEqual([1]);
+    expect(homeCalls(gf.calls, "commands/results")).toEqual([]);
+    await plugin.stop();
+  });
+
+  it("answers invalid_command for an unusable command whose id it can read", async () => {
+    vi.useFakeTimers({ now: new Date(NOW) });
+    const gf = guestFlow({ commands: [[{ ...command(9, 1), value: "blink" }]] });
+    const { plugin, bridgeWrites } = build();
+    await plugin.refresh!();
+    await plugin.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(bridgeWrites("home_command")).toEqual([]);
+    expect(homeCalls(gf.calls, "commands/results").map((c) => c.body)).toEqual([
+      { results: [{ id: 9, ok: false, reason: "invalid_command" }] },
+    ]);
+    await plugin.stop();
+  });
+
+  it("a start right after a stop leaves one loop, and the stop returns", async () => {
+    vi.useFakeTimers({ now: new Date(NOW) });
+    const gf = guestFlow();
+    const { plugin, status } = build();
+    await plugin.start();
+    await vi.advanceTimersByTimeAsync(0);
+    const stopping = plugin.stop();
+    await plugin.start();
+    await stopping;
+    expect(status.get(BRIDGE_ID)).toBe("online");
+    const before = homeCalls(gf.calls, "commands?wait=25").length;
+    await vi.advanceTimersByTimeAsync(5_000);
+    // One loop: one empty answer, one poll per 5 s.
+    expect(homeCalls(gf.calls, "commands?wait=25").length - before).toBe(1);
+    await plugin.stop();
+  });
+
   it("sends no order to any equipment: it only declares and updates its own devices", async () => {
     vi.useFakeTimers({ now: new Date(NOW) });
     guestFlow({ commands: [[command(1, 1)], [command(2, 2)]] });

@@ -194,7 +194,10 @@ describe("the home calls (spec 002): same channel, same signature", () => {
     expect(await client.homeCatalog([])).toEqual([{ equipmentId: "eq1", alias: "temperature" }]);
     await client.homeReadings([{ equipmentId: "eq1", alias: "temperature", value: 21.4, unit: "°C", measuredAt: "x" }]);
     await client.homeSeries([{ equipmentId: "eq1", alias: "rain_1h", buckets: [] }]);
-    expect((await client.homeCommands()).map((c) => c.id)).toEqual([3]);
+    const polled = await client.homeCommands();
+    expect(polled.commands.map((c) => c.id)).toEqual([3]);
+    // « blink » has a readable id, so it gets its answer; "5" has none.
+    expect(polled.invalid).toEqual([4]);
     await client.homeResults([{ id: 3, ok: true }]);
     expect(seen.map((s) => `${s.method} ${s.url.pathname}${s.url.search}`)).toEqual([
       "PUT /gf/public/v1/home/catalog",

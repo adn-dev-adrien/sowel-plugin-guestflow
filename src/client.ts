@@ -140,25 +140,40 @@ export class GuestFlowClient {
     await this.request("home", "POST", "/series", { series });
   }
 
-  /** The long poll: guestFlow answers at once with a command, or empty after `wait` seconds. */
-  async homeCommands(signal?: AbortSignal, wait = HOME_WAIT_S): Promise<HomeCommand[]> {
+  /**
+   * The long poll: guestFlow answers at once with a command, or empty after `wait` seconds.
+   * `invalid` is the id of each unusable command whose id could be read, to be answered.
+   */
+  async homeCommands(
+    signal?: AbortSignal,
+    wait = HOME_WAIT_S,
+  ): Promise<{ commands: HomeCommand[]; invalid: number[] }> {
     const body = await this.request("home", "GET", `/commands?wait=${wait}`, undefined, {
       timeoutMs: (wait + 15) * 1000,
       signal,
     });
     const commands = (body as { commands?: unknown }).commands;
     if (!Array.isArray(commands)) throw new GuestFlowError("guestFlow answered without commands[]", 200);
-    return commands.filter(isHomeCommand).map((c) => ({
-      id: c.id,
-      propertyId: c.propertyId,
-      equipmentId: c.equipmentId,
-      value: c.value,
-      issuedAt: c.issuedAt,
-    }));
+    const invalid = commands
+      .filter((c) => !isHomeCommand(c))
+      .map((c) => (c as { id?: unknown } | null)?.id)
+      .filter((id): id is number => Number.isSafeInteger(id) && (id as number) > 0);
+    return {
+      commands: commands.filter(isHomeCommand).map((c) => ({
+        id: c.id,
+        propertyId: c.propertyId,
+        equipmentId: c.equipmentId,
+        value: c.value,
+        issuedAt: c.issuedAt,
+      })),
+      invalid,
+    };
   }
 
   async homeResults(results: HomeResult[]): Promise<void> {
-    await this.request("home", "POST", "/commands/results", { results });
+    for (let i = 0; i < results.length; i += MAX_RESULTS_PER_POST) {
+      await this.request("home", "POST", "/commands/results", { results: results.slice(i, i + MAX_RESULTS_PER_POST) });
+    }
   }
 
   private async request(
