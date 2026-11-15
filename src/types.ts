@@ -54,7 +54,7 @@ export interface DiscoveredDevice {
   manufacturer?: string;
   model?: string;
   data: { key: string; type: "boolean" | "number" | "enum" | "text"; category: string; unit?: string }[];
-  orders: never[];
+  orders: { key: string; type: "boolean" | "number" | "enum" | "text"; category: string; enumValues?: string[] }[];
 }
 
 /** The part of `deps.deviceManager` this plugin calls (scoped to its own id). */
@@ -142,3 +142,47 @@ export type GateResult =
       error: string;
       message: string;
     };
+
+// ── Home automation (spec 002), `/public/v1/home/**` ─────────
+
+export interface HomeCatalogEntry {
+  id: string;
+  name: string;
+  zonePath: string;
+  type: string;
+  guestSwitchable?: boolean;
+  readings: { alias: string; category: string; unit: string | null }[];
+}
+
+export interface HomeSelectionPair {
+  equipmentId: string;
+  alias: string;
+}
+
+export interface HomeReading {
+  equipmentId: string;
+  alias: string;
+  value: unknown;
+  unit: string | null;
+  measuredAt: string;
+}
+
+export interface HomeSeries {
+  equipmentId: string;
+  alias: string;
+  buckets: { time: string; value: number }[];
+}
+
+export interface HomeCommand {
+  id: number;
+  propertyId: number;
+  equipmentId: string;
+  value: "on" | "off";
+  issuedAt: string;
+}
+
+export interface HomeResult {
+  id: number;
+  ok: boolean;
+  reason?: string;
+}

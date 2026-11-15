@@ -5,6 +5,7 @@ import {
   GuestFlowError,
   MAX_RESULTS_PER_POST,
   checkBaseUrl,
+  signRequest,
   signResponse,
 } from "../src/client.js";
 import type { GateResult } from "../src/types.js";
@@ -156,5 +157,61 @@ describe("the signed calls to guestFlow", () => {
     await expect(new GuestFlowClient(config(html.impl)).keys()).rejects.toMatchObject({
       message: expect.stringContaining("no JSON"),
     });
+  });
+});
+
+describe("the home calls (spec 002): same channel, same signature", () => {
+  it("signs a request the way guestFlow's canonicalString does (pinned vectors)", () => {
+    expect(signRequest("s3cret", "GET", "/public/v1/home/commands?wait=25", 1_790_000_000_000, "")).toBe(
+      "822f00596e68b7f62d3b133e8cf95845c6406118940eaf5f6b676f0ca88cc908",
+    );
+    const body = JSON.stringify({ results: [{ id: 7, ok: false, reason: "not_occupied" }] });
+    expect(signRequest("s3cret", "POST", "/public/v1/home/commands/results", 1_790_000_000_000, body)).toBe(
+      "18ebdbd1f5df923b24ffec9f51a53e7f0f0b4f6c2d7cee1441f1bc5471f9eb8e",
+    );
+  });
+
+  it("puts the catalogue, posts readings, series and results, long-polls the commands — all signed", async () => {
+    const { impl, seen } = fakeFetch((req) => {
+      if (req.url.pathname.endsWith("/catalog")) {
+        return { status: 200, json: { selection: [{ equipmentId: "eq1", alias: "temperature" }, { bad: 1 }] } };
+      }
+      if (req.url.pathname.endsWith("/commands")) {
+        return {
+          status: 200,
+          json: {
+            commands: [
+              { id: 3, propertyId: 1, equipmentId: "eq9", value: "on", issuedAt: "2026-11-15T10:00:00Z" },
+              { id: 4, propertyId: 1, equipmentId: "eq9", value: "blink", issuedAt: "2026-11-15T10:00:00Z" },
+              { id: "5", propertyId: 1, equipmentId: "eq9", value: "off", issuedAt: "2026-11-15T10:00:00Z" },
+            ],
+          },
+        };
+      }
+      return { status: 200, json: { stored: 1, dropped: 0 } };
+    });
+    const client = new GuestFlowClient(config(impl, "https://example.org/gf/"));
+    expect(await client.homeCatalog([])).toEqual([{ equipmentId: "eq1", alias: "temperature" }]);
+    await client.homeReadings([{ equipmentId: "eq1", alias: "temperature", value: 21.4, unit: "°C", measuredAt: "x" }]);
+    await client.homeSeries([{ equipmentId: "eq1", alias: "rain_1h", buckets: [] }]);
+    expect((await client.homeCommands()).map((c) => c.id)).toEqual([3]);
+    await client.homeResults([{ id: 3, ok: true }]);
+    expect(seen.map((s) => `${s.method} ${s.url.pathname}${s.url.search}`)).toEqual([
+      "PUT /gf/public/v1/home/catalog",
+      "POST /gf/public/v1/home/readings",
+      "POST /gf/public/v1/home/series",
+      "GET /gf/public/v1/home/commands?wait=25",
+      "POST /gf/public/v1/home/commands/results",
+    ]);
+    expect(seen.every((s) => s.valid)).toBe(true);
+  });
+
+  it("uses no command from an answer guestFlow did not sign", async () => {
+    const { impl } = fakeFetch(() => ({
+      status: 200,
+      sign: "other-secret",
+      json: { commands: [{ id: 3, propertyId: 1, equipmentId: "eq9", value: "on", issuedAt: "x" }] },
+    }));
+    await expect(new GuestFlowClient(config(impl)).homeCommands()).rejects.toMatchObject({ impostor: true });
   });
 });
