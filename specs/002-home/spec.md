@@ -132,3 +132,41 @@ What the Sowel core imposed or the build settled, beyond the rules above:
 ## Test counts
 
 Plugin 58 (41 before: +14 `home.test.ts`, +3 client); recipe 20.
+
+## Amendment of 2026-11-17 — recipe `guest-home` v0.2.0 (plugin unchanged)
+
+Wiring Adrien's house showed three defects (guestFlow spec `guest-app-home-automation.md` §3.E, rules 24-29): the
+catalogue described **every** equipment of the house; the recipe and guestFlow **computed** figures Sowel already
+holds; and every send is a bridge order that Sowel writes, payload included, into its activity feed — an hourly
+catalogue and a reading batch a minute drowned it.
+
+1. **Slot « Capteurs partagés »** (`sensors`, `type: "equipment", list: true`, `crossZone: true`, constrained to the
+   catalogued types). The catalogue holds only these equipments plus the whitelisted lights. Nothing else is
+   described, so a selection naming anything else finds no catalogue entry and sends nothing (recipe rule 3's
+   « selected AND described » check, unchanged). An empty slot describes no sensor. This is the reading boundary,
+   as « Lumières confiées aux voyageurs » is the acting one.
+2. **No computation.** The hourly sampling (`sampleHourly`, the `series` state) is removed. The day's min/max of a
+   temperature are Sowel's own `temperature_min_today` / `temperature_max_today` (spec 134, extended to every
+   thermometer by `sowel-core` spec 211 R1), read like any computed value through `currentOf`. The 24 hourly buckets
+   of rain and energy are read from Sowel's history through `ctx.history` (spec 211 R2). `energy_day` is the
+   equipment's computed cumul as before. **Spec 211 is not a prerequisite** (Adrien, 2026-11-17): the recipe
+   feature-detects `ctx.history` and each `temperature_*_today` alias, keeps `sowelVersion` at `>=1.71.0`, and without
+   them sends no min/max and no series — never an estimate; everything else works in full.
+3. **Send on change.** The catalogue is sent at start and when its JSON differs from the last one sent — the hourly
+   forced resend is removed (the plugin's own hourly re-PUT of its stored catalogue keeps refreshing the selection
+   without any Sowel order). Every 60 s the recipe sends only the pairs whose value changed since the last send, plus
+   once an hour a pair that stayed the same (`READING_REFRESH_MS`), so guestFlow never hides a stable value as older
+   than 6 h; nothing to send → no order. Series are read once per closed hour. A send
+   that failed is retried at the next tick with the same entries.
+4. **Readings are unchanged in shape.** The day's min/max travel as ordinary readings of their own aliases
+   (`temperature_min_today` / `_max_today`), catalogued with the equipment like any computed value. The plugin
+   relays them as it relays everything: no plugin change.
+
+**Tests (recipe):** catalogue = shared sensors + whitelisted lights only; a selection outside it sends nothing; an
+unchanged catalogue is not resent; an unchanged reading is not resent, a changed one is sent alone; min/max
+are relayed as readings of `temperature_min_today` / `_max_today` when the equipment has them; buckets come from a fake `ctx.history` and are absent when
+`ctx.history` is undefined.
+
+**Wiring:** after updating the recipe to 0.2.0, edit the instance and fill « Capteurs partagés » — for Adrien's gîte:
+the 7 room thermometers (Chambre Nord, Sud, Sud Est, Grenier, both bathrooms, RdC salle à manger), the outdoor
+thermometer, the rain gauge « Pluviomètre », « ConsommationGite » and « EDF ».
