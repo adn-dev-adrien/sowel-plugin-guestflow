@@ -153,8 +153,10 @@ catalogue and a reading batch a minute drowned it.
    feature-detects `ctx.history` and each `temperature_*_today` alias, keeps `sowelVersion` at `>=1.71.0`, and without
    them sends no min/max and no series — never an estimate; everything else works in full.
 3. **Send on change.** The catalogue is sent at start and when its JSON differs from the last one sent — the hourly
-   forced resend is removed. Every 60 s the recipe compares each selected pair's value and min/max with what it last
-   sent and sends only the changed pairs; nothing changed → no order. Series are read once per closed hour. A send
+   forced resend is removed (the plugin's own hourly re-PUT of its stored catalogue keeps refreshing the selection
+   without any Sowel order). Every 60 s the recipe sends only the pairs whose value changed since the last send, plus
+   once an hour a pair that stayed the same (`READING_REFRESH_MS`), so guestFlow never hides a stable value as older
+   than 6 h; nothing to send → no order. Series are read once per closed hour. A send
    that failed is retried at the next tick with the same entries.
 4. **Readings are unchanged in shape.** The day's min/max travel as ordinary readings of their own aliases
    (`temperature_min_today` / `_max_today`), catalogued with the equipment like any computed value. The plugin
