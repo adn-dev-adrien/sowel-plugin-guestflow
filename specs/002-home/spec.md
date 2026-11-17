@@ -133,7 +133,7 @@ What the Sowel core imposed or the build settled, beyond the rules above:
 
 Plugin 58 (41 before: +14 `home.test.ts`, +3 client); recipe 20.
 
-## Amendment of 2026-11-17 — recipe `guest-home` v0.2.0 (plugin unchanged but for a type)
+## Amendment of 2026-11-17 — recipe `guest-home` v0.2.0 (plugin unchanged)
 
 Wiring Adrien's house showed three defects (guestFlow spec `guest-app-home-automation.md` §3.E, rules 24-29): the
 catalogue described **every** equipment of the house; the recipe and guestFlow **computed** figures Sowel already
@@ -156,12 +156,13 @@ catalogue and a reading batch a minute drowned it.
    forced resend is removed. Every 60 s the recipe compares each selected pair's value and min/max with what it last
    sent and sends only the changed pairs; nothing changed → no order. Series are read once per closed hour. A send
    that failed is retried at the next tick with the same entries.
-4. **Readings** gain optional `dayMin`, `dayMax`. The plugin relays them unchanged; `HomeReading` in `src/types.ts`
-   gets the two optional fields (no plugin release needed for behaviour; bundled with the next one).
+4. **Readings are unchanged in shape.** The day's min/max travel as ordinary readings of their own aliases
+   (`temperature_min_today` / `_max_today`), catalogued with the equipment like any computed value. The plugin
+   relays them as it relays everything: no plugin change.
 
 **Tests (recipe):** catalogue = shared sensors + whitelisted lights only; a selection outside it sends nothing; an
 unchanged catalogue is not resent; an unchanged reading is not resent, a changed one is sent alone; min/max
-are relayed from `temperature_min_today` / `_max_today`; buckets come from a fake `ctx.history` and are absent when
+are relayed as readings of `temperature_min_today` / `_max_today` when the equipment has them; buckets come from a fake `ctx.history` and are absent when
 `ctx.history` is undefined.
 
 **Wiring:** after updating the recipe to 0.2.0, edit the instance and fill « Capteurs partagés » — for Adrien's gîte:
